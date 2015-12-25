@@ -17,14 +17,14 @@ public:
 	virtual ~JSTcpClient();
 
 public:
-	void connect(char* ip,int port);
+	int connect(char* ip,int port);
 	void close();
 
 private:
     virtual void run();
 
 protected:
-    virtual int handlePkg(char*data,int len);
+    virtual int handlePkg(char*data,size_t len) = 0;
 
 private:
     int _fd;
