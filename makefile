@@ -4,8 +4,7 @@ LIBS_FILE = -lpthread
 
 CC=g++
 CFLAGS=-g -O0 -DMACOS
-OBJS= main.o JSThread.o JSTcpClient.o
-
+OBJS= main.o JSThread.o JSTcpClient.o JSPeerClient.o JSPeerProtocol.o
 
 BIN= peerClient
 all: $(BIN)

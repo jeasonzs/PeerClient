@@ -17,22 +17,45 @@ using namespace std;
 JSTcpClient::JSTcpClient() {
 	// TODO Auto-generated constructor stub
 	_fd = -1;
+    _ip[0] = '\0';
+    _port = 0;
+    _reConnectms = 0;
 }
 
 JSTcpClient::~JSTcpClient() {
 	// TODO Auto-generated destructor stub
     close();
+    _fd = -1;
+    _ip[0] = '\0';
+    _port = 0;
+    _reConnectms = 0;
 }
 
 
 
-int JSTcpClient::connect(char* ip,int port)
+int JSTcpClient::connect(char* ip,int port,int reConnectms)
+{
+    strcpy(_ip,ip);
+    _port = port;
+    _reConnectms = reConnectms;
+    
+    close();
+    _fd = connect();
+    
+    if(_fd >= 0) {
+        start();
+        return 0;
+    }
+    else {
+        return -1;
+    }
+}
+int JSTcpClient::connect()
 {
     struct sockaddr_in s_add;
     int fd = -1;
     int ret = 0;
-    
-    close();
+
     fd= socket(PF_INET, SOCK_STREAM, 0);
     if (fd == -1)
     {
@@ -43,8 +66,8 @@ int JSTcpClient::connect(char* ip,int port)
     bzero(&s_add,sizeof(struct sockaddr_in));
     
     s_add.sin_family=AF_INET;
-    s_add.sin_addr.s_addr= inet_addr(ip);
-    s_add.sin_port=htons(port);
+    s_add.sin_addr.s_addr= inet_addr(_ip);
+    s_add.sin_port=htons(_port);
     
     struct timeval timeout={0,500*1000};//500ms
     ret = setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,(const char*)&timeout,sizeof(timeout));
@@ -58,10 +81,9 @@ int JSTcpClient::connect(char* ip,int port)
         ::close(fd);
         return -1;
     }
-    _fd = fd;
-    start();
-    return 0;
+    return fd;
 }
+
 void JSTcpClient::close()
 {
     if(isRuning()) {
@@ -72,13 +94,33 @@ void JSTcpClient::close()
     }
     _fd = -1;
 }
+
+bool JSTcpClient::isAlive()
+{
+    return _fd>=0?true:false;
+}
+
+int JSTcpClient::send(char *dat, size_t len)
+{
+    return ::send(_fd, dat, len, 0);
+}
+
 void JSTcpClient::run()
 {
     char dat[2048] = {0};
-	while(!needExit()) {
-        size_t len = recv(_fd, dat, sizeof(dat), 0);
+	while(!needExit() && (_fd >= 0 || _reConnectms)) {
+        if (_fd < 0 ) {
+            usleep(1000*_reConnectms);
+            _fd = connect();
+            continue;
+        }
+        ssize_t len = recv(_fd, dat, sizeof(dat), 0);
         if(len > 0) {
             handlePkg(dat, len);
+        }
+        else if(len == 0){
+            ::close(_fd);
+            _fd = -1;
         }
 	}
 }
