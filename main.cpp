@@ -13,17 +13,40 @@ bool mainStopFlg = false;
 void SigintCb(int iSigNum)
 {
     mainStopFlg=true;
+
 }
 
-void registCb()
-{
-    cout<<"registCb cb"<<endl;
-}
-
-void heartCb()
+void heartCb(void* ptr)
 {
     cout<<"heartCb cb"<<endl;
+	JSPeerClient* client = (JSPeerClient*)ptr;
+	if(client) {
+		client->close();
+	}
+	mainStopFlg=true;
 }
+
+void registCb(void* ptr)
+{
+    cout<<"registCb cb"<<endl;
+	JSPeerClient* client = (JSPeerClient*)ptr;
+	if(client) {
+		client->heart(heartCb,ptr);
+	}
+}
+
+void connectCb(void* ptr)
+{
+    cout<<"connectCb cb"<<endl;
+	JSPeerClient* client = (JSPeerClient*)ptr;
+	if(client) {
+		client->regist(registCb,ptr);
+	}
+}
+
+
+
+
 
 
 #if 1
@@ -32,19 +55,12 @@ int main(int argc, const char * argv[]) {
     signal(SIGINT,SigintCb);
     signal(SIGALRM,SigintCb);
     std::cout << "start peerClient!\n"<<endl;
-    JSPeerClient* client = new JSPeerClient(0x123456);
-    client->connect("192.168.10.158", 60000 ,1000*2);
     srand( (unsigned)time( NULL ) );
+    JSPeerClient* client = new JSPeerClient(rand()%1000000+1);
+    client->connect("192.168.10.158", 60000 ,1000*2,connectCb,client);
     while (!mainStopFlg) {
-        usleep(10*1000);
-//        if(client->send("hello server!!!\n", sizeof("hello server!!!\n")) <= 0) {
-//            cout<<"send error !!!!!!"<<endl;
-//        }
-//        client->heart(heartCb);
-//        client->regist(registCb);
-        JSPeerClient* client = new JSPeerClient(rand()%1000000+1);
-        client->connect("192.168.10.158", 60000 ,1000*2);
-        client->regist(registCb);
+        usleep(1000*1000);
+//        client->regist(registCb,NULL);
     }
 
     client->close();

@@ -3,9 +3,13 @@
 //  PeerClient
 //
 //  Created by jeason on 15/12/25.
-//  Copyright © 2015年 letv. All rights reserved.
+//  Copyright 漏 2015骞� letv. All rights reserved.
 //
-
+#include <stdlib.h>
+#include <unistd.h>
+#include <iostream>
+#include <signal.h>
+#include <sys/time.h>
 #include <iostream>
 #include "JSPeerClient.hpp"
 
@@ -20,16 +24,17 @@ JSPeerClient::~JSPeerClient()
 
 }
 
-
-void JSPeerClient::regist(RegistCallback cb)
+void JSPeerClient::regist(RegistCallback cb,void* ptr)
 {
     _registCb = cb;
+    _registCbPtr = ptr;
     JSPeerProtocolRegist regist(_clientId, JS_PEER_ID_SERVER);
     send((char*)&regist, sizeof(regist));
 }
-void JSPeerClient::heart(HeartCallback cb)
+void JSPeerClient::heart(HeartCallback cb,void* ptr)
 {
     _heartCb = cb;
+    _heartCbPtr = ptr;
     JSPeerProtocolHeart heart(_clientId, JS_PEER_ID_SERVER);
     send((char*)&heart, sizeof(heart));
 }
@@ -45,12 +50,12 @@ int JSPeerClient::handlePkg(char* data, size_t len)
         switch (header->type) {
             case JS_PEER_MSG_REGIST_RESPONSE:
                 cout<<"regist response msg"<<endl;
-                _registCb();
+                _registCb(_registCbPtr);
                 break;
                 
             case JS_PEER_MSG_HEART_RESPONSE:
                 cout<<"heart response msg"<<endl;
-                _heartCb();
+                _heartCb(_heartCbPtr);
                 break;
                 
             default:

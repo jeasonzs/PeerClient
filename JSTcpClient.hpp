@@ -10,6 +10,7 @@
 
 #include "JSThread.hpp"
 
+typedef void (*ConnectCallback)(void*);
 
 class JSTcpClient : public JSThread{
 public:
@@ -17,7 +18,7 @@ public:
 	virtual ~JSTcpClient();
 
 public:
-	int connect(char* ip,int port,int reConnectms);
+	void connect(char* ip,int port,int reConnectms,ConnectCallback cb,void* ptr);
 	void close();
     bool isAlive();
     int send(char* dat,size_t len);
@@ -34,7 +35,8 @@ private:
     char _ip[64];
     int _port;
     int _reConnectms;
-
+    ConnectCallback _connectCb;
+    void* _connectCbPtr;
 };
 
 #endif /* JSTCPCLIENT_HPP_ */

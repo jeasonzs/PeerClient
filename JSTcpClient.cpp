@@ -33,22 +33,17 @@ JSTcpClient::~JSTcpClient() {
 
 
 
-int JSTcpClient::connect(char* ip,int port,int reConnectms)
+void JSTcpClient::connect(char* ip,int port,int reConnectms,ConnectCallback cb,void* ptr)
 {
     strcpy(_ip,ip);
     _port = port;
     _reConnectms = reConnectms;
+    _connectCb = cb;
+    _connectCbPtr = ptr;
     
     close();
-    _fd = connect();
-    
-    if(_fd >= 0) {
-        start();
-        return 0;
-    }
-    else {
-        return -1;
-    }
+    _fd = -1;
+    start();
 }
 int JSTcpClient::connect()
 {
@@ -108,10 +103,17 @@ int JSTcpClient::send(char *dat, size_t len)
 void JSTcpClient::run()
 {
     char dat[2048] = {0};
+    _fd = connect();
+    if(_fd >= 0) {
+    	_connectCb(_connectCbPtr);
+    }
 	while(!needExit() && (_fd >= 0 || _reConnectms)) {
         if (_fd < 0 ) {
             usleep(1000*_reConnectms);
             _fd = connect();
+            if(_fd >= 0) {
+				_connectCb(_connectCbPtr);
+			}
             continue;
         }
         ssize_t len = recv(_fd, dat, sizeof(dat), 0);
