@@ -36,7 +36,7 @@ private:
     int _port;
     int _reConnectms;
     ConnectCallback _connectCb;
-    void* _connectCbPtr;
+    void* _connectCbContext;
 };
 
 #endif /* JSTCPCLIENT_HPP_ */

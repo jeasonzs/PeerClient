@@ -33,13 +33,13 @@ JSTcpClient::~JSTcpClient() {
 
 
 
-void JSTcpClient::connect(char* ip,int port,int reConnectms,ConnectCallback cb,void* ptr)
+void JSTcpClient::connect(char* ip,int port,int reConnectms,ConnectCallback cb,void* context)
 {
     strcpy(_ip,ip);
     _port = port;
     _reConnectms = reConnectms;
     _connectCb = cb;
-    _connectCbPtr = ptr;
+    _connectCbContext = context;
     
     close();
     _fd = -1;
@@ -105,14 +105,14 @@ void JSTcpClient::run()
     char dat[2048] = {0};
     _fd = connect();
     if(_fd >= 0) {
-    	_connectCb(_connectCbPtr);
+    	_connectCb(_connectCbContext);
     }
 	while(!needExit() && (_fd >= 0 || _reConnectms)) {
         if (_fd < 0 ) {
             usleep(1000*_reConnectms);
             _fd = connect();
             if(_fd >= 0) {
-				_connectCb(_connectCbPtr);
+				_connectCb(_connectCbContext);
 			}
             continue;
         }

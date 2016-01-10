@@ -13,8 +13,10 @@
 #include "JSPeerProtocol.hpp"
 
 
-typedef void (*RegistCallback)(void*);
-typedef void (*HeartCallback)(void*);
+typedef void (*RegistResponseCB)(void* context);
+typedef void (*HeartResponseCB)(void* context);
+typedef void (*ConnectPeerResponseCB)(void* context,int status,int remoteId,char* iceInfoRemote);
+typedef void (*IncomeConnectPeerCB)(void* context,int remoteId,char* iceInfoRemote);
 
 class JSPeerClient : public JSTcpClient
 {
@@ -23,18 +25,30 @@ public:
     ~JSPeerClient();
     
 public:
-    void regist(RegistCallback cb,void* ptr);
-    void heart(HeartCallback cb,void* ptr);
-    
+    void setRegistResponseCb(RegistResponseCB cb,void* context);
+    void setHeartResponseCb(HeartResponseCB cb,void* context);
+    void setConnectPeerResponseCb(ConnectPeerResponseCB cb,void* context);
+    void setIncomeConnectPeerCb(IncomeConnectPeerCB cb,void* context);
+
+public:
+    void regist();
+    void heart();
+    void connectPeer(int remoteId,char* iceInfoLocal);
+    void incomeConnectPeerResponse(int remoteId,char* iceInfoLocal);
     
 protected:
     virtual int handlePkg(char* data,size_t len);
     
 private:
-    RegistCallback _registCb;
-    void* _registCbPtr;
-    HeartCallback _heartCb;
-    void* _heartCbPtr;
+    RegistResponseCB _registResponseCb;
+    void* _registResponseCbContext;
+    HeartResponseCB _heartResponseCb;
+    void* _heartResponseCbContext;
+    ConnectPeerResponseCB _connectPeerResponseCb;
+    void* _connectPeerResponseCbContext;
+    IncomeConnectPeerCB _incomeConnectPeerCb;
+    void* _incomeConnectPeerCbContext;
+
     int _clientId;
 };
 

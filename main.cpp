@@ -15,34 +15,56 @@ void SigintCb(int iSigNum)
     mainStopFlg=true;
 
 }
-
-void heartCb(void* ptr)
-{
-    cout<<"heartCb cb"<<endl;
-	JSPeerClient* client = (JSPeerClient*)ptr;
-	if(client) {
-		client->close();
-	}
-	mainStopFlg=true;
-}
-
-void registCb(void* ptr)
-{
-    cout<<"registCb cb"<<endl;
-	JSPeerClient* client = (JSPeerClient*)ptr;
-	if(client) {
-		client->heart(heartCb,ptr);
-	}
-}
-
-void connectCb(void* ptr)
+void connectCb(void* context)
 {
     cout<<"connectCb cb"<<endl;
-	JSPeerClient* client = (JSPeerClient*)ptr;
+	JSPeerClient* client = (JSPeerClient*)context;
 	if(client) {
-		client->regist(registCb,ptr);
+		client->regist();
 	}
 }
+
+void registResponseCb(void* context)
+{
+    cout<<"registCb cb"<<endl;
+	JSPeerClient* client = (JSPeerClient*)context;
+	if(client) {
+		client->heart();
+	}
+}
+
+void heartResponseCb(void* context)
+{
+    cout<<"heartCb cb"<<endl;
+//	JSPeerClient* client = (JSPeerClient*)context;
+//	if(client) {
+//		client->connectPeer(0x12345678,"iceinfo");
+//	}
+}
+
+
+void connectPeerResponseCb(void* context,int status,int remoteId,char* iceInfoRemote)
+{
+    cout<<"connectPeerResponseCb cb"<<endl;
+	JSPeerClient* client = (JSPeerClient*)context;
+	if(client) {
+		cout<<"status="<<status<<"remoteId="<<remoteId<<"iceInfoRemote="<<iceInfoRemote<<endl;
+	}
+}
+
+void incomeConnectPeerCb(void* context,int remoteId,char* iceInfoRemote)
+{
+    cout<<"incomeConnectPeerCb cb"<<endl;
+	JSPeerClient* client = (JSPeerClient*)context;
+	if(client) {
+		cout<<"remoteId="<<remoteId<<"iceInfoRemote="<<iceInfoRemote<<endl;
+		client->incomeConnectPeerResponse(remoteId,"iceinfo");
+	}
+}
+
+
+
+
 
 
 
@@ -56,10 +78,17 @@ int main(int argc, const char * argv[]) {
     signal(SIGALRM,SigintCb);
     std::cout << "start peerClient!\n"<<endl;
     srand( (unsigned)time( NULL ) );
-    JSPeerClient* client = new JSPeerClient(rand()%1000000+1);
+    JSPeerClient* client = new JSPeerClient(21/*rand()%1000000+1*/);
+    client->setRegistResponseCb(registResponseCb,client);
+    client->setHeartResponseCb(heartResponseCb,client);
+    client->setConnectPeerResponseCb(connectPeerResponseCb,client);
+    client->setIncomeConnectPeerCb(incomeConnectPeerCb,client);
+
     client->connect("192.168.10.158", 60000 ,1000*2,connectCb,client);
     while (!mainStopFlg) {
-        usleep(1000*1000);
+    	client->heart();
+        usleep(1000*1000*5);
+        client->connectPeer(0x12345678,"iceinfo");
 //        client->regist(registCb,NULL);
     }
 
