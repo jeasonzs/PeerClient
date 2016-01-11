@@ -84,7 +84,7 @@ int main(int argc, const char * argv[]) {
     client->setConnectPeerResponseCb(connectPeerResponseCb,client);
     client->setIncomeConnectPeerCb(incomeConnectPeerCb,client);
 
-    client->connect("192.168.10.158", 60000 ,1000*2,connectCb,client);
+    client->connect("127.0.0.1", 60000 ,1000*2,connectCb,client);
     while (!mainStopFlg) {
     	client->heart();
         usleep(1000*1000*5);
@@ -105,6 +105,7 @@ class parent
 	int a[16];
 public:
 	parent(){;};
+    
 	inline int sizse(){return sizeof(*this)-sizeof(parent);};
 };
 

@@ -78,7 +78,7 @@ void JSPeerClient::incomeConnectPeerResponse(int remoteId,char* iceInfoLocal)
 
 int JSPeerClient::handlePkg(char* data, size_t len)
 {
-    cout<<"handle pkg len="<<len<<",dat="<<data;
+    cout<<"handle pkg len="<<len<<",dat="<<data<<endl;
     JSPeerProtocolHeader* header = NULL;
     int pos = 0;
     header = JSPeerProtocolHeader::mapPkg(data, len, pos);
