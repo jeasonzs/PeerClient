@@ -22,6 +22,11 @@ public:
     
 public:
     void setLogFile(char* logFile);
+    void setDNS(char* dns);
+    void setMaxhost(int value);
+    void setRegular(int value);
+    void setStun(char* value);
+    void setTurn(char* turn,int turn_tcp,char* userName,char* passwd);
     
 private:
     void threadWork();

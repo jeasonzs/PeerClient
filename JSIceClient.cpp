@@ -243,6 +243,102 @@ void JSIceClient::setLogFile(char* logFile)
     log_fhnd = fopen(logFile, "a");
     pj_log_set_log_func(&log_func);
 }
+
+void JSIceClient::setDNS(char* value)
+{
+    pj_status_t status;
+    pj_str_t ns = pj_str(value);
+    CHECK( pj_dns_resolver_create(&cp.factory,
+                                  "resolver",
+                                  0,
+                                  ice_cfg.stun_cfg.timer_heap,
+                                  ice_cfg.stun_cfg.ioqueue,
+                                  &ice_cfg.resolver) );
+
+    CHECK( pj_dns_resolver_set_ns(ice_cfg.resolver, 1,
+                                  &ns, NULL) );
+}
+
+
+void JSIceClient::setMaxhost(int value)
+{
+    if (value != -1)
+        ice_cfg.stun.max_host_cands = value;
+}
+
+void JSIceClient::setRegular(int value)
+{
+    if (value)
+        ice_cfg.opt.aggressive = PJ_FALSE;
+    else
+        ice_cfg.opt.aggressive = PJ_TRUE;
+}
+
+void JSIceClient::setStun(char* value)
+{
+    pj_str_t stun_srv = pj_str(value);
+    /* Configure STUN/srflx candidate resolution */
+    if (stun_srv.slen) {
+        char *pos;
+
+        /* Command line option may contain port number */
+        if ((pos=pj_strchr(&stun_srv, ':')) != NULL) {
+            ice_cfg.stun.server.ptr = stun_srv.ptr;
+            ice_cfg.stun.server.slen = (pos - stun_srv.ptr);
+
+            ice_cfg.stun.port = (pj_uint16_t)atoi(pos+1);
+        } else {
+            ice_cfg.stun.server = stun_srv;
+            ice_cfg.stun.port = PJ_STUN_PORT;
+        }
+
+        /* For this demo app, configure longer STUN keep-alive time
+         * so that it does't clutter the screen output.
+         */
+        ice_cfg.stun.cfg.ka_interval = KA_INTERVAL;
+    }
+}
+
+
+void JSIceClient::setTurn(char* turn,int turn_tcp,char* userName,char* passwd)
+{
+
+    pj_str_t turn_srv = pj_str(turn);
+    pj_str_t turn_username = pj_str(userName);
+    pj_str_t turn_password = pj_str(passwd);
+    /* Configure TURN candidate */
+    if (turn_srv.slen) {
+        char *pos;
+
+        /* Command line option may contain port number */
+        if ((pos=pj_strchr(&turn_srv, ':')) != NULL) {
+            ice_cfg.turn.server.ptr = turn_srv.ptr;
+            ice_cfg.turn.server.slen = (pos - turn_srv.ptr);
+
+            ice_cfg.turn.port = (pj_uint16_t)atoi(pos+1);
+        } else {
+            ice_cfg.turn.server = turn_srv;
+            ice_cfg.turn.port = PJ_STUN_PORT;
+        }
+
+        /* TURN credential */
+        ice_cfg.turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
+        ice_cfg.turn.auth_cred.data.static_cred.username = turn_username;
+        ice_cfg.turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
+        ice_cfg.turn.auth_cred.data.static_cred.data = turn_password;
+
+        /* Connection type to TURN server */
+        if (turn_tcp)
+            ice_cfg.turn.conn_type = PJ_TURN_TP_TCP;
+        else
+            ice_cfg.turn.conn_type = PJ_TURN_TP_UDP;
+
+        /* For this demo app, configure longer keep-alive time
+         * so that it does't clutter the screen output.
+         */
+        ice_cfg.turn.alloc_param.ka_interval = KA_INTERVAL;
+    }
+}
 /*
  * This is the main application initialization function. It is called
  * once (and only once) during application initialization sequence by
@@ -284,87 +380,6 @@ pj_status_t JSIceClient::icedemo_init(void)
     
     ice_cfg.af = pj_AF_INET();
     
-
-//    /* Create DNS resolver if nameserver is set */
-//    if (opt.ns.slen) {
-//        CHECK( pj_dns_resolver_create(&cp.factory,
-//                                      "resolver",
-//                                      0,
-//                                      ice_cfg.stun_cfg.timer_heap,
-//                                      ice_cfg.stun_cfg.ioqueue,
-//                                      &ice_cfg.resolver) );
-//        
-//        CHECK( pj_dns_resolver_set_ns(ice_cfg.resolver, 1,
-//                                      &opt.ns, NULL) );
-//    }
-//    
-//    /* -= Start initializing ICE stream transport config =- */
-//    
-//    /* Maximum number of host candidates */
-//    if (opt.max_host != -1)
-//        ice_cfg.stun.max_host_cands = opt.max_host;
-//    
-//    /* Nomination strategy */
-//    if (opt.regular)
-//        ice_cfg.opt.aggressive = PJ_FALSE;
-//    else
-//        ice_cfg.opt.aggressive = PJ_TRUE;
-//    
-//    /* Configure STUN/srflx candidate resolution */
-//    if (opt.stun_srv.slen) {
-//        char *pos;
-//        
-//        /* Command line option may contain port number */
-//        if ((pos=pj_strchr(&opt.stun_srv, ':')) != NULL) {
-//            ice_cfg.stun.server.ptr = opt.stun_srv.ptr;
-//            ice_cfg.stun.server.slen = (pos - opt.stun_srv.ptr);
-//            
-//            ice_cfg.stun.port = (pj_uint16_t)atoi(pos+1);
-//        } else {
-//            ice_cfg.stun.server = opt.stun_srv;
-//            ice_cfg.stun.port = PJ_STUN_PORT;
-//        }
-//        
-//        /* For this demo app, configure longer STUN keep-alive time
-//         * so that it does't clutter the screen output.
-//         */
-//        ice_cfg.stun.cfg.ka_interval = KA_INTERVAL;
-//    }
-//    
-//    /* Configure TURN candidate */
-//    if (opt.turn_srv.slen) {
-//        char *pos;
-//        
-//        /* Command line option may contain port number */
-//        if ((pos=pj_strchr(&opt.turn_srv, ':')) != NULL) {
-//            ice_cfg.turn.server.ptr = opt.turn_srv.ptr;
-//            ice_cfg.turn.server.slen = (pos - opt.turn_srv.ptr);
-//            
-//            ice_cfg.turn.port = (pj_uint16_t)atoi(pos+1);
-//        } else {
-//            ice_cfg.turn.server = opt.turn_srv;
-//            ice_cfg.turn.port = PJ_STUN_PORT;
-//        }
-//        
-//        /* TURN credential */
-//        ice_cfg.turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
-//        ice_cfg.turn.auth_cred.data.static_cred.username = opt.turn_username;
-//        ice_cfg.turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
-//        ice_cfg.turn.auth_cred.data.static_cred.data = opt.turn_password;
-//        
-//        /* Connection type to TURN server */
-//        if (opt.turn_tcp)
-//            ice_cfg.turn.conn_type = PJ_TURN_TP_TCP;
-//        else
-//            ice_cfg.turn.conn_type = PJ_TURN_TP_UDP;
-//        
-//        /* For this demo app, configure longer keep-alive time
-//         * so that it does't clutter the screen output.
-//         */
-//        ice_cfg.turn.alloc_param.ka_interval = KA_INTERVAL;
-//    }
-    
-    /* -= That's it for now, initialization is complete =- */
     return PJ_SUCCESS;
 }
 
