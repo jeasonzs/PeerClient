@@ -5,7 +5,7 @@
 #include <sys/time.h>
 
 #include "JSPeerClient.hpp"
-
+#include <pjnath.h>
 
 using namespace std;
 bool mainStopFlg = false;
@@ -72,31 +72,35 @@ void incomeConnectPeerCb(void* context,int remoteId,char* iceInfoRemote)
 
 
 #if 1
-int main(int argc, const char * argv[]) {
+extern int iceDemo(int argc, char *argv[]);
+
+int main(int argc, char * argv[]) {
     // insert code here...
-    signal(SIGINT,SigintCb);
-    signal(SIGALRM,SigintCb);
-    std::cout << "start peerClient!\n"<<endl;
-    srand( (unsigned)time( NULL ) );
-    JSPeerClient* client = new JSPeerClient(21/*rand()%1000000+1*/);
-    client->setRegistResponseCb(registResponseCb,client);
-    client->setHeartResponseCb(heartResponseCb,client);
-    client->setConnectPeerResponseCb(connectPeerResponseCb,client);
-    client->setIncomeConnectPeerCb(incomeConnectPeerCb,client);
-
-    client->connect("127.0.0.1", 60000 ,1000*2,connectCb,client);
-    while (!mainStopFlg) {
-    	client->heart();
-        usleep(1000*1000*5);
-        client->connectPeer(0x12345678,"iceinfo");
-//        client->regist(registCb,NULL);
-    }
-
-    client->close();
-    delete client;
-
-
-    return 0;
+    return iceDemo(argc,argv);
+//    signal(SIGINT,SigintCb);
+//    signal(SIGALRM,SigintCb);
+//    std::cout << "start peerClient!\n"<<endl;
+//    srand( (unsigned)time( NULL ) );
+//    JSPeerClient* client = new JSPeerClient(21/*rand()%1000000+1*/);
+//    client->setRegistResponseCb(registResponseCb,client);
+//    client->setHeartResponseCb(heartResponseCb,client);
+//    client->setConnectPeerResponseCb(connectPeerResponseCb,client);
+//    client->setIncomeConnectPeerCb(incomeConnectPeerCb,client);
+//
+//    client->connect("127.0.0.1", 60000 ,1000*2,connectCb,client);
+    
+//    while (!mainStopFlg) {
+////    	client->heart();
+////        usleep(1000*1000*5);
+////        client->connectPeer(0x12345678,"iceinfo");
+////        client->regist(registCb,NULL);
+//    }
+//
+//    client->close();
+//    delete client;
+//
+//
+//    return 0;
 }
 #else
 

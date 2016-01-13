@@ -1,10 +1,10 @@
 
 
-LIBS_FILE = -lpthread
+LIBS_FILE = -lpthread $(shell pkg-config --libs libpjproject)
 
 CC=g++
-CFLAGS=-g -O0 -DMACOS
-OBJS= main.o JSThread.o JSTcpClient.o JSPeerClient.o JSPeerProtocol.o
+CFLAGS=-g -O0 -DMACOS $(shell pkg-config --cflags libpjproject)
+OBJS= main.o JSThread.o JSTcpClient.o JSPeerClient.o JSPeerProtocol.o icedemo.o JSIceClient.o
 
 BIN= peerClient
 all: $(BIN)
