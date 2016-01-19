@@ -6,6 +6,7 @@
 
 #include "JSIceClient.hpp"
 
+//TODO:global
 #define KA_INTERVAL 300
 #define THIS_FILE   "icedemo.c"
 
@@ -21,22 +22,608 @@ if (printed <= 0 || printed >= (int)(maxlen - (p-buffer))) \
 return -PJ_ETOOSMALL; \
 p += printed
 
-
 FILE		*log_fhnd;
+/* log callback to write to file */
+void log_func(int level, const char *data, int len)
+{
+    pj_log_write(level, data, len);
+    if (log_fhnd) {
+        if (fwrite(data, len, 1, log_fhnd) != 1)
+        return;
+    }
+}
 
 
+/*
+ * This is the callback that is registered to the ICE stream transport to
+ * receive notification about incoming data. By "data" it means application
+ * data such as RTP/RTCP, and not packets that belong to ICE signaling (such
+ * as STUN connectivity checks or TURN signaling).
+ */
+void cb_on_rx_data(pj_ice_strans *ice_st,
+                          unsigned comp_id,
+                          void *pkt, pj_size_t size,
+                          const pj_sockaddr_t *src_addr,
+                          unsigned src_addr_len)
+{
+    char ipstr[PJ_INET6_ADDRSTRLEN+10];
+
+    PJ_UNUSED_ARG(ice_st);
+    PJ_UNUSED_ARG(src_addr_len);
+    PJ_UNUSED_ARG(pkt);
+
+    // Don't do this! It will ruin the packet buffer in case TCP is used!
+    //((char*)pkt)[size] = '\0';
+
+    PJ_LOG(3,(THIS_FILE, "Component %d: received %d bytes data from %s: \"%.*s\"",
+              comp_id, size,
+              pj_sockaddr_print(src_addr, ipstr, sizeof(ipstr), 3),
+              (unsigned)size,
+              (char*)pkt));
+}
+
+/*
+ * This is the callback that is registered to the ICE stream transport to
+ * receive notification about ICE state progression.
+ */
+void cb_on_ice_complete(pj_ice_strans *ice_st,
+                               pj_ice_strans_op op,
+                               pj_status_t status)
+{
+    const char *opname =
+    (op==PJ_ICE_STRANS_OP_INIT? "initialization" :
+	    (op==PJ_ICE_STRANS_OP_NEGOTIATION ? "negotiation" : "unknown_op"));
+
+    if (status == PJ_SUCCESS) {
+        PJ_LOG(3,(THIS_FILE, "ICE %s successful", opname));
+    } else {
+//        char errmsg[PJ_ERR_MSG_SIZE];
+//
+//        pj_strerror(status, errmsg, sizeof(errmsg));
+//        PJ_LOG(1,(THIS_FILE, "ICE %s failed: %s", opname, errmsg));
+//        pj_ice_strans_destroy(ice_st);
+//        icest = NULL;
+    }
+}
+
+
+//TODO:construct
 JSIceClient::JSIceClient()
 {
-
+    memset(&cp,0,sizeof(cp));
+    pool = NULL;
+    thread = NULL;
+    thread_quit_flag = PJ_FALSE;
+    memset(&ice_cfg,0,sizeof(ice_cfg));
+    icest = NULL;
+    pj_bzero(&iceCb, sizeof(iceCb));
+    iceCb.on_rx_data = cb_on_rx_data;
+    iceCb.on_ice_complete = cb_on_ice_complete;
+    
+    icedemo_init();
 }
 JSIceClient::~JSIceClient()
 {
+    err_exit("Quitting..", PJ_SUCCESS);
+}
 
+//TODO:setter
+void JSIceClient::setIceCb(pj_ice_strans_cb *iceCb)
+{
+    memcpy(&this->iceCb,iceCb,sizeof(pj_ice_strans_cb));
 }
 
 
+void JSIceClient::setLogFile(char* logFile)
+{
+    log_fhnd = fopen(logFile, "a");
+    pj_log_set_log_func(&log_func);
+}
+
+void JSIceClient::setDNS(char* value)
+{
+    pj_status_t status;
+    pj_str_t ns = pj_str(value);
+    CHECK( pj_dns_resolver_create(&cp.factory,
+                                  "resolver",
+                                  0,
+                                  ice_cfg.stun_cfg.timer_heap,
+                                  ice_cfg.stun_cfg.ioqueue,
+                                  &ice_cfg.resolver) );
+    
+    CHECK( pj_dns_resolver_set_ns(ice_cfg.resolver, 1,
+                                  &ns, NULL) );
+}
+
+
+void JSIceClient::setMaxhost(int value)
+{
+    if (value != -1)
+    ice_cfg.stun.max_host_cands = value;
+}
+
+void JSIceClient::setRegular(int value)
+{
+    if (value)
+    ice_cfg.opt.aggressive = PJ_FALSE;
+    else
+    ice_cfg.opt.aggressive = PJ_TRUE;
+}
+
+void JSIceClient::setStun(char* value)
+{
+    pj_str_t stun_srv = pj_str(value);
+    /* Configure STUN/srflx candidate resolution */
+    if (stun_srv.slen) {
+        char *pos;
+        
+        /* Command line option may contain port number */
+        if ((pos=pj_strchr(&stun_srv, ':')) != NULL) {
+            ice_cfg.stun.server.ptr = stun_srv.ptr;
+            ice_cfg.stun.server.slen = (pos - stun_srv.ptr);
+            
+            ice_cfg.stun.port = (pj_uint16_t)atoi(pos+1);
+        } else {
+            ice_cfg.stun.server = stun_srv;
+            ice_cfg.stun.port = PJ_STUN_PORT;
+        }
+        
+        /* For this demo app, configure longer STUN keep-alive time
+         * so that it does't clutter the screen output.
+         */
+        ice_cfg.stun.cfg.ka_interval = KA_INTERVAL;
+    }
+}
+
+
+void JSIceClient::setTurn(char* turn,int turn_tcp,char* userName,char* passwd)
+{
+    
+    pj_str_t turn_srv = pj_str(turn);
+    pj_str_t turn_username = pj_str(userName);
+    pj_str_t turn_password = pj_str(passwd);
+    /* Configure TURN candidate */
+    if (turn_srv.slen) {
+        char *pos;
+        
+        /* Command line option may contain port number */
+        if ((pos=pj_strchr(&turn_srv, ':')) != NULL) {
+            ice_cfg.turn.server.ptr = turn_srv.ptr;
+            ice_cfg.turn.server.slen = (pos - turn_srv.ptr);
+            
+            ice_cfg.turn.port = (pj_uint16_t)atoi(pos+1);
+        } else {
+            ice_cfg.turn.server = turn_srv;
+            ice_cfg.turn.port = PJ_STUN_PORT;
+        }
+        
+        /* TURN credential */
+        ice_cfg.turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
+        ice_cfg.turn.auth_cred.data.static_cred.username = turn_username;
+        ice_cfg.turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
+        ice_cfg.turn.auth_cred.data.static_cred.data = turn_password;
+        
+        /* Connection type to TURN server */
+        if (turn_tcp)
+        ice_cfg.turn.conn_type = PJ_TURN_TP_TCP;
+        else
+        ice_cfg.turn.conn_type = PJ_TURN_TP_UDP;
+        
+        /* For this demo app, configure longer keep-alive time
+         * so that it does't clutter the screen output.
+         */
+        ice_cfg.turn.alloc_param.ka_interval = KA_INTERVAL;
+    }
+}
+
+//TODO:outside operation
+/*
+ * Create ICE stream transport instance, invoked from the menu.
+ */
+void JSIceClient::icedemo_create_instance(void)
+{
+    //    pj_ice_strans_cb icecb;
+    pj_status_t status;
+    
+    if (icest != NULL) {
+        puts("ICE instance already created, destroy it first");
+        return;
+    }
+
+    
+    /* create the instance */
+    status = pj_ice_strans_create("icedemo",		    /* object name  */
+                                  &ice_cfg,	    /* settings	    */
+                                  1/*opt.comp_cnt*/,	    /* comp_cnt	    */
+                                  NULL,			    /* user data    */
+                                  &iceCb,			    /* callback	    */
+                                  &icest)		    /* instance ptr */
+				;
+    if (status != PJ_SUCCESS)
+    icedemo_perror("error creating ice", status);
+    else
+    PJ_LOG(3,(THIS_FILE, "ICE instance successfully created"));
+}
+
+/*
+ * Destroy ICE stream transport instance, invoked from the menu.
+ */
+void JSIceClient::icedemo_destroy_instance(void)
+{
+    if (icest == NULL) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
+        return;
+    }
+    
+    pj_ice_strans_destroy(icest);
+    icest = NULL;
+    
+    reset_rem_info();
+    
+    PJ_LOG(3,(THIS_FILE, "ICE instance destroyed"));
+}
+
+/*
+ * Create ICE session, invoked from the menu.
+ */
+void JSIceClient::icedemo_init_session(unsigned rolechar)
+{
+    pj_ice_sess_role role = (pj_tolower((pj_uint8_t)rolechar)=='o' ?
+                             PJ_ICE_SESS_ROLE_CONTROLLING :
+                             PJ_ICE_SESS_ROLE_CONTROLLED);
+    pj_status_t status;
+    
+    if (icest == NULL) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
+        return;
+    }
+    
+    if (pj_ice_strans_has_sess(icest)) {
+        PJ_LOG(1,(THIS_FILE, "Error: Session already created"));
+        return;
+    }
+    
+    status = pj_ice_strans_init_ice(icest, role, NULL, NULL);
+    if (status != PJ_SUCCESS)
+    icedemo_perror("error creating session", status);
+    else
+    PJ_LOG(3,(THIS_FILE, "ICE session created"));
+    
+    reset_rem_info();
+}
+
+
+/*
+ * Stop/destroy ICE session, invoked from the menu.
+ */
+void JSIceClient::icedemo_stop_session(void)
+{
+    pj_status_t status;
+    
+    if (icest == NULL) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
+        return;
+    }
+    
+    if (!pj_ice_strans_has_sess(icest)) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE session, initialize first"));
+        return;
+    }
+    
+    status = pj_ice_strans_stop_ice(icest);
+    if (status != PJ_SUCCESS)
+    icedemo_perror("error stopping session", status);
+    else
+    PJ_LOG(3,(THIS_FILE, "ICE session stopped"));
+    
+    reset_rem_info();
+}
+
+
+/*
+ * Input and parse SDP from the remote (containing remote's ICE information)
+ * and save it to global variables.
+ */
+void JSIceClient::icedemo_input_remote(void)
+{
+    char linebuf[80];
+    unsigned media_cnt = 0;
+    unsigned comp0_port = 0;
+    char     comp0_addr[80];
+    pj_bool_t done = PJ_FALSE;
+    
+    puts("Paste SDP from remote host, end with empty line");
+    
+    reset_rem_info();
+    
+    comp0_addr[0] = '\0';
+    
+    while (!done) {
+        pj_size_t len;
+        char *line;
+        
+        printf(">");
+        if (stdout) fflush(stdout);
+        
+        if (fgets(linebuf, sizeof(linebuf), stdin)==NULL)
+        break;
+        
+        len = strlen(linebuf);
+        while (len && (linebuf[len-1] == '\r' || linebuf[len-1] == '\n'))
+        linebuf[--len] = '\0';
+        
+        line = linebuf;
+        while (len && pj_isspace(*line))
+        ++line, --len;
+        
+        if (len==0)
+        break;
+        
+        /* Ignore subsequent media descriptors */
+        if (media_cnt > 1)
+        continue;
+        
+        switch (line[0]) {
+                case 'm':
+            {
+                int cnt;
+                char media[32], portstr[32];
+                
+                ++media_cnt;
+                if (media_cnt > 1) {
+                    puts("Media line ignored");
+                    break;
+                }
+                
+                cnt = sscanf(line+2, "%s %s RTP/", media, portstr);
+                if (cnt != 2) {
+                    PJ_LOG(1,(THIS_FILE, "Error parsing media line"));
+                    goto on_error;
+                }
+                
+                comp0_port = atoi(portstr);
+                
+            }
+                break;
+                case 'c':
+            {
+                int cnt;
+                char c[32], net[32], ip[80];
+                
+                cnt = sscanf(line+2, "%s %s %s", c, net, ip);
+                if (cnt != 3) {
+                    PJ_LOG(1,(THIS_FILE, "Error parsing connection line"));
+                    goto on_error;
+                }
+                
+                strcpy(comp0_addr, ip);
+            }
+                break;
+                case 'a':
+            {
+                char *attr = strtok(line+2, ": \t\r\n");
+                if (strcmp(attr, "ice-ufrag")==0) {
+                    strcpy(rem.ufrag, attr+strlen(attr)+1);
+                } else if (strcmp(attr, "ice-pwd")==0) {
+                    strcpy(rem.pwd, attr+strlen(attr)+1);
+                } else if (strcmp(attr, "rtcp")==0) {
+                    char *val = attr+strlen(attr)+1;
+                    int af, cnt;
+                    int port;
+                    char net[32], ip[64];
+                    pj_str_t tmp_addr;
+                    pj_status_t status;
+                    
+                    cnt = sscanf(val, "%d IN %s %s", &port, net, ip);
+                    if (cnt != 3) {
+                        PJ_LOG(1,(THIS_FILE, "Error parsing rtcp attribute"));
+                        goto on_error;
+                    }
+                    
+                    if (strchr(ip, ':'))
+                    af = pj_AF_INET6();
+                    else
+                    af = pj_AF_INET();
+                    
+                    pj_sockaddr_init(af, &rem.def_addr[1], NULL, 0);
+                    tmp_addr = pj_str(ip);
+                    status = pj_sockaddr_set_str_addr(af, &rem.def_addr[1],
+                                                      &tmp_addr);
+                    if (status != PJ_SUCCESS) {
+                        PJ_LOG(1,(THIS_FILE, "Invalid IP address"));
+                        goto on_error;
+                    }
+                    pj_sockaddr_set_port(&rem.def_addr[1], (pj_uint16_t)port);
+                    
+                } else if (strcmp(attr, "candidate")==0) {
+                    char *sdpcand = attr+strlen(attr)+1;
+                    int af, cnt;
+                    char foundation[32], transport[12], ipaddr[80], type[32];
+                    pj_str_t tmpaddr;
+                    int comp_id, prio, port;
+                    pj_ice_sess_cand *cand;
+                    pj_status_t status;
+                    
+                    cnt = sscanf(sdpcand, "%s %d %s %d %s %d typ %s",
+                                 foundation,
+                                 &comp_id,
+                                 transport,
+                                 &prio,
+                                 ipaddr,
+                                 &port,
+                                 type);
+                    if (cnt != 7) {
+                        PJ_LOG(1, (THIS_FILE, "error: Invalid ICE candidate line"));
+                        goto on_error;
+                    }
+                    
+                    cand = &rem.cand[rem.cand_cnt];
+                    pj_bzero(cand, sizeof(*cand));
+                    
+                    if (strcmp(type, "host")==0)
+                    cand->type = PJ_ICE_CAND_TYPE_HOST;
+                    else if (strcmp(type, "srflx")==0)
+                    cand->type = PJ_ICE_CAND_TYPE_SRFLX;
+                    else if (strcmp(type, "relay")==0)
+                    cand->type = PJ_ICE_CAND_TYPE_RELAYED;
+                    else {
+                        PJ_LOG(1, (THIS_FILE, "Error: invalid candidate type '%s'",
+                                   type));
+                        goto on_error;
+                    }
+                    
+                    cand->comp_id = (pj_uint8_t)comp_id;
+                    pj_strdup2(pool, &cand->foundation, foundation);
+                    cand->prio = prio;
+                    
+                    if (strchr(ipaddr, ':'))
+                    af = pj_AF_INET6();
+                    else
+                    af = pj_AF_INET();
+                    
+                    tmpaddr = pj_str(ipaddr);
+                    pj_sockaddr_init(af, &cand->addr, NULL, 0);
+                    status = pj_sockaddr_set_str_addr(af, &cand->addr, &tmpaddr);
+                    if (status != PJ_SUCCESS) {
+                        PJ_LOG(1,(THIS_FILE, "Error: invalid IP address '%s'",
+                                  ipaddr));
+                        goto on_error;
+                    }
+                    
+                    pj_sockaddr_set_port(&cand->addr, (pj_uint16_t)port);
+                    
+                    ++rem.cand_cnt;
+                    
+                    if (cand->comp_id > rem.comp_cnt)
+                    rem.comp_cnt = cand->comp_id;
+                }
+            }
+                break;
+        }
+    }
+    
+    if (rem.cand_cnt==0 ||
+        rem.ufrag[0]==0 ||
+        rem.pwd[0]==0 ||
+        rem.comp_cnt == 0)
+    {
+        PJ_LOG(1, (THIS_FILE, "Error: not enough info"));
+        goto on_error;
+    }
+    
+    if (comp0_port==0 || comp0_addr[0]=='\0') {
+        PJ_LOG(1, (THIS_FILE, "Error: default address for component 0 not found"));
+        goto on_error;
+    } else {
+        int af;
+        pj_str_t tmp_addr;
+        pj_status_t status;
+        
+        if (strchr(comp0_addr, ':'))
+        af = pj_AF_INET6();
+        else
+        af = pj_AF_INET();
+        
+        pj_sockaddr_init(af, &rem.def_addr[0], NULL, 0);
+        tmp_addr = pj_str(comp0_addr);
+        status = pj_sockaddr_set_str_addr(af, &rem.def_addr[0],
+                                          &tmp_addr);
+        if (status != PJ_SUCCESS) {
+            PJ_LOG(1,(THIS_FILE, "Invalid IP address in c= line"));
+            goto on_error;
+        }
+        pj_sockaddr_set_port(&rem.def_addr[0], (pj_uint16_t)comp0_port);
+    }
+    
+    PJ_LOG(3, (THIS_FILE, "Done, %d remote candidate(s) added",
+               rem.cand_cnt));
+    return;
+    
+on_error:
+    reset_rem_info();
+}
+
+
+
+/*
+ * Start ICE negotiation! This function is invoked from the menu.
+ */
+void JSIceClient::icedemo_start_nego(void)
+{
+    pj_str_t rufrag, rpwd;
+    pj_status_t status;
+    
+    if (icest == NULL) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
+        return;
+    }
+    
+    if (!pj_ice_strans_has_sess(icest)) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE session, initialize first"));
+        return;
+    }
+    
+    if (rem.cand_cnt == 0) {
+        PJ_LOG(1,(THIS_FILE, "Error: No remote info, input remote info first"));
+        return;
+    }
+    
+    PJ_LOG(3,(THIS_FILE, "Starting ICE negotiation.."));
+    
+    status = pj_ice_strans_start_ice(icest,
+                                     pj_cstr(&rufrag, rem.ufrag),
+                                     pj_cstr(&rpwd, rem.pwd),
+                                     rem.cand_cnt,
+                                     rem.cand);
+    if (status != PJ_SUCCESS)
+    icedemo_perror("Error starting ICE", status);
+    else
+    PJ_LOG(3,(THIS_FILE, "ICE negotiation started"));
+}
+
+
+/*
+ * Send application data to remote agent.
+ */
+void JSIceClient::icedemo_send_data(unsigned comp_id, const char *data)
+{
+    pj_status_t status;
+    
+    if (icest == NULL) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
+        return;
+    }
+    
+    if (!pj_ice_strans_has_sess(icest)) {
+        PJ_LOG(1,(THIS_FILE, "Error: No ICE session, initialize first"));
+        return;
+    }
+    
+    /*
+     if (!pj_ice_strans_sess_is_complete(icest)) {
+     PJ_LOG(1,(THIS_FILE, "Error: ICE negotiation has not been started or is in progress"));
+     return;
+     }
+     */
+    
+    if (comp_id<1||comp_id>pj_ice_strans_get_running_comp_cnt(icest)) {
+        PJ_LOG(1,(THIS_FILE, "Error: invalid component ID"));
+        return;
+    }
+    
+    status = pj_ice_strans_sendto(icest, comp_id, data, strlen(data),
+                                  &rem.def_addr[comp_id-1],
+                                  pj_sockaddr_get_len(&rem.def_addr[comp_id-1]));
+    if (status != PJ_SUCCESS)
+    icedemo_perror("Error sending data", status);
+    else
+    PJ_LOG(3,(THIS_FILE, "Data sent"));
+}
+
+//TODO:inside operation
 void JSIceClient::threadWork()
 {
+    printf("thread work\n");
     while (!thread_quit_flag) {
         handle_events(500, NULL);
     }
@@ -172,173 +759,12 @@ pj_status_t JSIceClient::handle_events(unsigned max_msec, unsigned *p_count)
 
 
 
-/*
- * This is the callback that is registered to the ICE stream transport to
- * receive notification about incoming data. By "data" it means application
- * data such as RTP/RTCP, and not packets that belong to ICE signaling (such
- * as STUN connectivity checks or TURN signaling).
- */
-//void JSIceClient::cb_on_rx_data(pj_ice_strans *ice_st,
-//                          unsigned comp_id,
-//                          void *pkt, pj_size_t size,
-//                          const pj_sockaddr_t *src_addr,
-//                          unsigned src_addr_len)
-//{
-//    char ipstr[PJ_INET6_ADDRSTRLEN+10];
-//    
-//    PJ_UNUSED_ARG(ice_st);
-//    PJ_UNUSED_ARG(src_addr_len);
-//    PJ_UNUSED_ARG(pkt);
-//    
-//    // Don't do this! It will ruin the packet buffer in case TCP is used!
-//    //((char*)pkt)[size] = '\0';
-//    
-//    PJ_LOG(3,(THIS_FILE, "Component %d: received %d bytes data from %s: \"%.*s\"",
-//              comp_id, size,
-//              pj_sockaddr_print(src_addr, ipstr, sizeof(ipstr), 3),
-//              (unsigned)size,
-//              (char*)pkt));
-//}
-//
-///*
-// * This is the callback that is registered to the ICE stream transport to
-// * receive notification about ICE state progression.
-// */
-//void JSIceClient::cb_on_ice_complete(pj_ice_strans *ice_st,
-//                               pj_ice_strans_op op,
-//                               pj_status_t status)
-//{
-//    const char *opname =
-//    (op==PJ_ICE_STRANS_OP_INIT? "initialization" :
-//	    (op==PJ_ICE_STRANS_OP_NEGOTIATION ? "negotiation" : "unknown_op"));
-//    
-//    if (status == PJ_SUCCESS) {
-//        PJ_LOG(3,(THIS_FILE, "ICE %s successful", opname));
-//    } else {
-//        char errmsg[PJ_ERR_MSG_SIZE];
-//        
-//        pj_strerror(status, errmsg, sizeof(errmsg));
-//        PJ_LOG(1,(THIS_FILE, "ICE %s failed: %s", opname, errmsg));
-//        pj_ice_strans_destroy(ice_st);
-//        icest = NULL;
-//    }
-//}
-
-
-/* log callback to write to file */
-void log_func(int level, const char *data, int len)
-{
-    pj_log_write(level, data, len);
-    if (log_fhnd) {
-        if (fwrite(data, len, 1, log_fhnd) != 1)
-            return;
-    }
-}
 
 
 
 
-void JSIceClient::setLogFile(char* logFile)
-{
-    log_fhnd = fopen(logFile, "a");
-    pj_log_set_log_func(&log_func);
-}
-
-void JSIceClient::setDNS(char* value)
-{
-    pj_status_t status;
-    pj_str_t ns = pj_str(value);
-    CHECK( pj_dns_resolver_create(&cp.factory,
-                                  "resolver",
-                                  0,
-                                  ice_cfg.stun_cfg.timer_heap,
-                                  ice_cfg.stun_cfg.ioqueue,
-                                  &ice_cfg.resolver) );
-
-    CHECK( pj_dns_resolver_set_ns(ice_cfg.resolver, 1,
-                                  &ns, NULL) );
-}
 
 
-void JSIceClient::setMaxhost(int value)
-{
-    if (value != -1)
-        ice_cfg.stun.max_host_cands = value;
-}
-
-void JSIceClient::setRegular(int value)
-{
-    if (value)
-        ice_cfg.opt.aggressive = PJ_FALSE;
-    else
-        ice_cfg.opt.aggressive = PJ_TRUE;
-}
-
-void JSIceClient::setStun(char* value)
-{
-    pj_str_t stun_srv = pj_str(value);
-    /* Configure STUN/srflx candidate resolution */
-    if (stun_srv.slen) {
-        char *pos;
-
-        /* Command line option may contain port number */
-        if ((pos=pj_strchr(&stun_srv, ':')) != NULL) {
-            ice_cfg.stun.server.ptr = stun_srv.ptr;
-            ice_cfg.stun.server.slen = (pos - stun_srv.ptr);
-
-            ice_cfg.stun.port = (pj_uint16_t)atoi(pos+1);
-        } else {
-            ice_cfg.stun.server = stun_srv;
-            ice_cfg.stun.port = PJ_STUN_PORT;
-        }
-
-        /* For this demo app, configure longer STUN keep-alive time
-         * so that it does't clutter the screen output.
-         */
-        ice_cfg.stun.cfg.ka_interval = KA_INTERVAL;
-    }
-}
-
-
-void JSIceClient::setTurn(char* turn,int turn_tcp,char* userName,char* passwd)
-{
-
-    pj_str_t turn_srv = pj_str(turn);
-    pj_str_t turn_username = pj_str(userName);
-    pj_str_t turn_password = pj_str(passwd);
-    /* Configure TURN candidate */
-    if (turn_srv.slen) {
-        char *pos;
-
-        /* Command line option may contain port number */
-        if ((pos=pj_strchr(&turn_srv, ':')) != NULL) {
-            ice_cfg.turn.server.ptr = turn_srv.ptr;
-            ice_cfg.turn.server.slen = (pos - turn_srv.ptr);
-
-            ice_cfg.turn.port = (pj_uint16_t)atoi(pos+1);
-        } else {
-            ice_cfg.turn.server = turn_srv;
-            ice_cfg.turn.port = PJ_STUN_PORT;
-        }
-
-        /* TURN credential */
-        ice_cfg.turn.auth_cred.type = PJ_STUN_AUTH_CRED_STATIC;
-        ice_cfg.turn.auth_cred.data.static_cred.username = turn_username;
-        ice_cfg.turn.auth_cred.data.static_cred.data_type = PJ_STUN_PASSWD_PLAIN;
-        ice_cfg.turn.auth_cred.data.static_cred.data = turn_password;
-
-        /* Connection type to TURN server */
-        if (turn_tcp)
-            ice_cfg.turn.conn_type = PJ_TURN_TP_TCP;
-        else
-            ice_cfg.turn.conn_type = PJ_TURN_TP_UDP;
-
-        /* For this demo app, configure longer keep-alive time
-         * so that it does't clutter the screen output.
-         */
-        ice_cfg.turn.alloc_param.ka_interval = KA_INTERVAL;
-    }
-}
 /*
  * This is the main application initialization function. It is called
  * once (and only once) during application initialization sequence by
@@ -384,37 +810,7 @@ pj_status_t JSIceClient::icedemo_init(void)
 }
 
 
-/*
- * Create ICE stream transport instance, invoked from the menu.
- */
-void JSIceClient::icedemo_create_instance(void)
-{
-//    pj_ice_strans_cb icecb;
-    pj_status_t status;
-    
-    if (icest != NULL) {
-        puts("ICE instance already created, destroy it first");
-        return;
-    }
-    
-//    /* init the callback */
-//    pj_bzero(&icecb, sizeof(icecb));
-//    icecb.on_rx_data = cb_on_rx_data;
-//    icecb.on_ice_complete = cb_on_ice_complete;
-    
-    /* create the instance */
-    status = pj_ice_strans_create("icedemo",		    /* object name  */
-                                  &ice_cfg,	    /* settings	    */
-                                  1/*opt.comp_cnt*/,	    /* comp_cnt	    */
-                                  NULL,			    /* user data    */
-                                  iceCb,			    /* callback	    */
-                                  &icest)		    /* instance ptr */
-				;
-    if (status != PJ_SUCCESS)
-        icedemo_perror("error creating ice", status);
-    else
-        PJ_LOG(3,(THIS_FILE, "ICE instance successfully created"));
-}
+
 
 /* Utility to nullify parsed remote info */
 void JSIceClient::reset_rem_info(void)
@@ -423,111 +819,10 @@ void JSIceClient::reset_rem_info(void)
 }
 
 
-/*
- * Destroy ICE stream transport instance, invoked from the menu.
- */
-void JSIceClient::icedemo_destroy_instance(void)
-{
-    if (icest == NULL) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
-        return;
-    }
-    
-    pj_ice_strans_destroy(icest);
-    icest = NULL;
-    
-    reset_rem_info();
-    
-    PJ_LOG(3,(THIS_FILE, "ICE instance destroyed"));
-}
-
-
-/*
- * Create ICE session, invoked from the menu.
- */
-void JSIceClient::icedemo_init_session(unsigned rolechar)
-{
-    pj_ice_sess_role role = (pj_tolower((pj_uint8_t)rolechar)=='o' ?
-                             PJ_ICE_SESS_ROLE_CONTROLLING :
-                             PJ_ICE_SESS_ROLE_CONTROLLED);
-    pj_status_t status;
-    
-    if (icest == NULL) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
-        return;
-    }
-    
-    if (pj_ice_strans_has_sess(icest)) {
-        PJ_LOG(1,(THIS_FILE, "Error: Session already created"));
-        return;
-    }
-    
-    status = pj_ice_strans_init_ice(icest, role, NULL, NULL);
-    if (status != PJ_SUCCESS)
-        icedemo_perror("error creating session", status);
-    else
-        PJ_LOG(3,(THIS_FILE, "ICE session created"));
-    
-    reset_rem_info();
-}
-
-
-/*
- * Stop/destroy ICE session, invoked from the menu.
- */
-void JSIceClient::icedemo_stop_session(void)
-{
-    pj_status_t status;
-    
-    if (icest == NULL) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
-        return;
-    }
-    
-    if (!pj_ice_strans_has_sess(icest)) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE session, initialize first"));
-        return;
-    }
-    
-    status = pj_ice_strans_stop_ice(icest);
-    if (status != PJ_SUCCESS)
-        icedemo_perror("error stopping session", status);
-    else
-        PJ_LOG(3,(THIS_FILE, "ICE session stopped"));
-    
-    reset_rem_info();
-}
 
 
 
 
-/* Utility to create a=candidate SDP attribute */
-int JSIceClient::print_cand(char buffer[], unsigned maxlen,
-                      const pj_ice_sess_cand *cand)
-{
-    char ipaddr[PJ_INET6_ADDRSTRLEN];
-    char *p = buffer;
-    int printed;
-    
-    PRINT("a=candidate:%.*s %u UDP %u %s %u typ ",
-          (int)cand->foundation.slen,
-          cand->foundation.ptr,
-          (unsigned)cand->comp_id,
-          cand->prio,
-          pj_sockaddr_print(&cand->addr, ipaddr,
-                            sizeof(ipaddr), 0),
-          (unsigned)pj_sockaddr_get_port(&cand->addr));
-    
-    PRINT("%s\n",
-          pj_ice_get_cand_type_name(cand->type));
-    
-    if (p == buffer+maxlen)
-        return -PJ_ETOOSMALL;
-    
-    *p = '\0';
-    
-    return (int)(p-buffer);
-}
 
 /*
  * Encode ICE information in SDP.
@@ -611,6 +906,8 @@ int JSIceClient::encode_session(char buffer[], unsigned maxlen)
 }
 
 
+
+//TODO:no use function
 /*
  * Show information contained in the ICE stream transport. This is
  * invoked from the menu.
@@ -682,304 +979,8 @@ void JSIceClient::icedemo_show_ice(void)
 }
 
 
-/*
- * Input and parse SDP from the remote (containing remote's ICE information)
- * and save it to global variables.
- */
-void JSIceClient::icedemo_input_remote(void)
-{
-    char linebuf[80];
-    unsigned media_cnt = 0;
-    unsigned comp0_port = 0;
-    char     comp0_addr[80];
-    pj_bool_t done = PJ_FALSE;
-    
-    puts("Paste SDP from remote host, end with empty line");
-    
-    reset_rem_info();
-    
-    comp0_addr[0] = '\0';
-    
-    while (!done) {
-        pj_size_t len;
-        char *line;
-        
-        printf(">");
-        if (stdout) fflush(stdout);
-        
-        if (fgets(linebuf, sizeof(linebuf), stdin)==NULL)
-            break;
-        
-        len = strlen(linebuf);
-        while (len && (linebuf[len-1] == '\r' || linebuf[len-1] == '\n'))
-            linebuf[--len] = '\0';
-        
-        line = linebuf;
-        while (len && pj_isspace(*line))
-            ++line, --len;
-        
-        if (len==0)
-            break;
-        
-        /* Ignore subsequent media descriptors */
-        if (media_cnt > 1)
-            continue;
-        
-        switch (line[0]) {
-            case 'm':
-            {
-                int cnt;
-                char media[32], portstr[32];
-                
-                ++media_cnt;
-                if (media_cnt > 1) {
-                    puts("Media line ignored");
-                    break;
-                }
-                
-                cnt = sscanf(line+2, "%s %s RTP/", media, portstr);
-                if (cnt != 2) {
-                    PJ_LOG(1,(THIS_FILE, "Error parsing media line"));
-                    goto on_error;
-                }
-                
-                comp0_port = atoi(portstr);
-                
-            }
-                break;
-            case 'c':
-            {
-                int cnt;
-                char c[32], net[32], ip[80];
-                
-                cnt = sscanf(line+2, "%s %s %s", c, net, ip);
-                if (cnt != 3) {
-                    PJ_LOG(1,(THIS_FILE, "Error parsing connection line"));
-                    goto on_error;
-                }
-                
-                strcpy(comp0_addr, ip);
-            }
-                break;
-            case 'a':
-            {
-                char *attr = strtok(line+2, ": \t\r\n");
-                if (strcmp(attr, "ice-ufrag")==0) {
-                    strcpy(rem.ufrag, attr+strlen(attr)+1);
-                } else if (strcmp(attr, "ice-pwd")==0) {
-                    strcpy(rem.pwd, attr+strlen(attr)+1);
-                } else if (strcmp(attr, "rtcp")==0) {
-                    char *val = attr+strlen(attr)+1;
-                    int af, cnt;
-                    int port;
-                    char net[32], ip[64];
-                    pj_str_t tmp_addr;
-                    pj_status_t status;
-                    
-                    cnt = sscanf(val, "%d IN %s %s", &port, net, ip);
-                    if (cnt != 3) {
-                        PJ_LOG(1,(THIS_FILE, "Error parsing rtcp attribute"));
-                        goto on_error;
-                    }
-                    
-                    if (strchr(ip, ':'))
-                        af = pj_AF_INET6();
-                    else
-                        af = pj_AF_INET();
-                    
-                    pj_sockaddr_init(af, &rem.def_addr[1], NULL, 0);
-                    tmp_addr = pj_str(ip);
-                    status = pj_sockaddr_set_str_addr(af, &rem.def_addr[1],
-                                                      &tmp_addr);
-                    if (status != PJ_SUCCESS) {
-                        PJ_LOG(1,(THIS_FILE, "Invalid IP address"));
-                        goto on_error;
-                    }
-                    pj_sockaddr_set_port(&rem.def_addr[1], (pj_uint16_t)port);
-                    
-                } else if (strcmp(attr, "candidate")==0) {
-                    char *sdpcand = attr+strlen(attr)+1;
-                    int af, cnt;
-                    char foundation[32], transport[12], ipaddr[80], type[32];
-                    pj_str_t tmpaddr;
-                    int comp_id, prio, port;
-                    pj_ice_sess_cand *cand;
-                    pj_status_t status;
-                    
-                    cnt = sscanf(sdpcand, "%s %d %s %d %s %d typ %s",
-                                 foundation,
-                                 &comp_id,
-                                 transport,
-                                 &prio,
-                                 ipaddr,
-                                 &port,
-                                 type);
-                    if (cnt != 7) {
-                        PJ_LOG(1, (THIS_FILE, "error: Invalid ICE candidate line"));
-                        goto on_error;
-                    }
-                    
-                    cand = &rem.cand[rem.cand_cnt];
-                    pj_bzero(cand, sizeof(*cand));
-                    
-                    if (strcmp(type, "host")==0)
-                        cand->type = PJ_ICE_CAND_TYPE_HOST;
-                    else if (strcmp(type, "srflx")==0)
-                        cand->type = PJ_ICE_CAND_TYPE_SRFLX;
-                    else if (strcmp(type, "relay")==0)
-                        cand->type = PJ_ICE_CAND_TYPE_RELAYED;
-                    else {
-                        PJ_LOG(1, (THIS_FILE, "Error: invalid candidate type '%s'",
-                                   type));
-                        goto on_error;
-                    }
-                    
-                    cand->comp_id = (pj_uint8_t)comp_id;
-                    pj_strdup2(pool, &cand->foundation, foundation);
-                    cand->prio = prio;
-                    
-                    if (strchr(ipaddr, ':'))
-                        af = pj_AF_INET6();
-                    else
-                        af = pj_AF_INET();
-                    
-                    tmpaddr = pj_str(ipaddr);
-                    pj_sockaddr_init(af, &cand->addr, NULL, 0);
-                    status = pj_sockaddr_set_str_addr(af, &cand->addr, &tmpaddr);
-                    if (status != PJ_SUCCESS) {
-                        PJ_LOG(1,(THIS_FILE, "Error: invalid IP address '%s'",
-                                  ipaddr));
-                        goto on_error;
-                    }
-                    
-                    pj_sockaddr_set_port(&cand->addr, (pj_uint16_t)port);
-                    
-                    ++rem.cand_cnt;
-                    
-                    if (cand->comp_id > rem.comp_cnt)
-                        rem.comp_cnt = cand->comp_id;
-                }
-            }
-                break;
-        }
-    }
-    
-    if (rem.cand_cnt==0 ||
-        rem.ufrag[0]==0 ||
-        rem.pwd[0]==0 ||
-        rem.comp_cnt == 0)
-    {
-        PJ_LOG(1, (THIS_FILE, "Error: not enough info"));
-        goto on_error;
-    }
-    
-    if (comp0_port==0 || comp0_addr[0]=='\0') {
-        PJ_LOG(1, (THIS_FILE, "Error: default address for component 0 not found"));
-        goto on_error;
-    } else {
-        int af;
-        pj_str_t tmp_addr;
-        pj_status_t status;
-        
-        if (strchr(comp0_addr, ':'))
-            af = pj_AF_INET6();
-        else
-            af = pj_AF_INET();
-        
-        pj_sockaddr_init(af, &rem.def_addr[0], NULL, 0);
-        tmp_addr = pj_str(comp0_addr);
-        status = pj_sockaddr_set_str_addr(af, &rem.def_addr[0],
-                                          &tmp_addr);
-        if (status != PJ_SUCCESS) {
-            PJ_LOG(1,(THIS_FILE, "Invalid IP address in c= line"));
-            goto on_error;
-        }
-        pj_sockaddr_set_port(&rem.def_addr[0], (pj_uint16_t)comp0_port);
-    }
-    
-    PJ_LOG(3, (THIS_FILE, "Done, %d remote candidate(s) added",
-               rem.cand_cnt));
-    return;
-    
-on_error:
-    reset_rem_info();
-}
 
 
-/*
- * Start ICE negotiation! This function is invoked from the menu.
- */
-void JSIceClient::icedemo_start_nego(void)
-{
-    pj_str_t rufrag, rpwd;
-    pj_status_t status;
-    
-    if (icest == NULL) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
-        return;
-    }
-    
-    if (!pj_ice_strans_has_sess(icest)) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE session, initialize first"));
-        return;
-    }
-    
-    if (rem.cand_cnt == 0) {
-        PJ_LOG(1,(THIS_FILE, "Error: No remote info, input remote info first"));
-        return;
-    }
-    
-    PJ_LOG(3,(THIS_FILE, "Starting ICE negotiation.."));
-    
-    status = pj_ice_strans_start_ice(icest,
-                                     pj_cstr(&rufrag, rem.ufrag),
-                                     pj_cstr(&rpwd, rem.pwd),
-                                     rem.cand_cnt,
-                                     rem.cand);
-    if (status != PJ_SUCCESS)
-        icedemo_perror("Error starting ICE", status);
-    else
-        PJ_LOG(3,(THIS_FILE, "ICE negotiation started"));
-}
-
-
-/*
- * Send application data to remote agent.
- */
-void JSIceClient::icedemo_send_data(unsigned comp_id, const char *data)
-{
-    pj_status_t status;
-    
-    if (icest == NULL) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE instance, create it first"));
-        return;
-    }
-    
-    if (!pj_ice_strans_has_sess(icest)) {
-        PJ_LOG(1,(THIS_FILE, "Error: No ICE session, initialize first"));
-        return;
-    }
-    
-    /*
-     if (!pj_ice_strans_sess_is_complete(icest)) {
-     PJ_LOG(1,(THIS_FILE, "Error: ICE negotiation has not been started or is in progress"));
-     return;
-     }
-     */
-    
-    if (comp_id<1||comp_id>pj_ice_strans_get_running_comp_cnt(icest)) {
-        PJ_LOG(1,(THIS_FILE, "Error: invalid component ID"));
-        return;
-    }
-    
-    status = pj_ice_strans_sendto(icest, comp_id, data, strlen(data),
-                                  &rem.def_addr[comp_id-1],
-                                  pj_sockaddr_get_len(&rem.def_addr[comp_id-1]));
-    if (status != PJ_SUCCESS)
-        icedemo_perror("Error sending data", status);
-    else
-        PJ_LOG(3,(THIS_FILE, "Data sent"));
-}
 
 
 /*
@@ -1163,6 +1164,38 @@ void JSIceClient::icedemo_usage()
     puts(" --turn-password, -p PWD   Set password of the credential to WPWD");
     puts(" --turn-fingerprint, -F    Use fingerprint for outgoing TURN requests");
     puts("");
+}
+
+
+
+
+
+/* Utility to create a=candidate SDP attribute */
+int JSIceClient::print_cand(char buffer[], unsigned maxlen,
+                            const pj_ice_sess_cand *cand)
+{
+    char ipaddr[PJ_INET6_ADDRSTRLEN];
+    char *p = buffer;
+    int printed;
+    
+    PRINT("a=candidate:%.*s %u UDP %u %s %u typ ",
+          (int)cand->foundation.slen,
+          cand->foundation.ptr,
+          (unsigned)cand->comp_id,
+          cand->prio,
+          pj_sockaddr_print(&cand->addr, ipaddr,
+                            sizeof(ipaddr), 0),
+          (unsigned)pj_sockaddr_get_port(&cand->addr));
+    
+    PRINT("%s\n",
+          pj_ice_get_cand_type_name(cand->type));
+    
+    if (p == buffer+maxlen)
+    return -PJ_ETOOSMALL;
+    
+    *p = '\0';
+    
+    return (int)(p-buffer);
 }
 
 

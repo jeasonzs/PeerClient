@@ -6,6 +6,7 @@
 
 #include "JSPeerClient.hpp"
 #include <pjnath.h>
+#include "JSIceClient.hpp"
 
 using namespace std;
 bool mainStopFlg = false;
@@ -75,8 +76,11 @@ void incomeConnectPeerCb(void* context,int remoteId,char* iceInfoRemote)
 extern int iceDemo(int argc, char *argv[]);
 
 int main(int argc, char * argv[]) {
+    JSIceClient iceClient;
+    iceClient.setStun("127.0.0.1");
+    iceClient.icedemo_console();
     // insert code here...
-    return iceDemo(argc,argv);
+    //return iceDemo(argc,argv);
 //    signal(SIGINT,SigintCb);
 //    signal(SIGALRM,SigintCb);
 //    std::cout << "start peerClient!\n"<<endl;

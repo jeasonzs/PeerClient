@@ -21,12 +21,23 @@ public:
 
     
 public:
+    void setIceCb(pj_ice_strans_cb *iceCb);
     void setLogFile(char* logFile);
     void setDNS(char* dns);
     void setMaxhost(int value);
     void setRegular(int value);
     void setStun(char* value);
     void setTurn(char* turn,int turn_tcp,char* userName,char* passwd);
+
+public:
+    void icedemo_create_instance(void);
+    void icedemo_destroy_instance(void);
+    void icedemo_init_session(unsigned rolechar);
+    void icedemo_stop_session(void);
+    void icedemo_input_remote(void);
+    void icedemo_start_nego(void);
+    void icedemo_send_data(unsigned comp_id, const char *data);
+    void icedemo_console(void);
     
 private:
     void threadWork();
@@ -35,23 +46,16 @@ private:
     void err_exit(const char *title, pj_status_t status);
     pj_status_t handle_events(unsigned max_msec, unsigned *p_count);
     pj_status_t icedemo_init(void);
-    void icedemo_create_instance(void);
     void reset_rem_info(void);
-    void icedemo_destroy_instance(void);
-    void icedemo_init_session(unsigned rolechar);
-    void icedemo_stop_session(void);
-    int print_cand(char buffer[], unsigned maxlen,
-                                const pj_ice_sess_cand *cand);
     int encode_session(char buffer[], unsigned maxlen);
+
+private:
     void icedemo_show_ice(void);
-    void icedemo_input_remote(void);
-    void icedemo_start_nego(void);
-    void icedemo_send_data(unsigned comp_id, const char *data);
     void icedemo_help_menu(void);
     void icedemo_print_menu(void);
-    void icedemo_console(void);
+    //void icedemo_console(void);
     void icedemo_usage();
-    
+    int print_cand(char buffer[], unsigned maxlen, const pj_ice_sess_cand *cand);
 private:
     /* Our global variables */
     pj_caching_pool	 cp;
@@ -60,7 +64,7 @@ private:
     pj_bool_t		 thread_quit_flag;
     pj_ice_strans_cfg	 ice_cfg;
     pj_ice_strans	*icest;
-    pj_ice_strans_cb *iceCb;
+    pj_ice_strans_cb iceCb;
     /* Variables to store parsed remote ICE info */
     struct rem_info
     {
